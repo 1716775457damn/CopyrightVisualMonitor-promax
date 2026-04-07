@@ -1,30 +1,39 @@
-# CopyrightVisualMonitor v2.0
-中国版权局软件著作权申请状态视觉自检助手
+# CCNU Copyright Hub (CopyrightVisualMonitor v3.0)
 
-基于纯视觉 AI (YOLO) + 传统 OCR 构建的完全离线、自动化 Edge 浏览器操作工具。
-无需任何网络连接，即开即用直接监控软件著作权登记各个阶段的变化情况。
+华中师范大学软件著作权申请全流程自动化工作站
+
+基于 **纯视觉 AI (Tesseract OCR) + OpenCV + Playwright** 构建的完全离线、自动化 Edge 浏览器操作工具。
+无需任何网络训练数据上传，即开即用，一站式解决软著申请的繁琐流程。
 
 ---
 
-## 🚀 项目目录结构建议
+## 🚀 项目架构与原理
+
+本项目在 v3.0 版本进行了重大重构，**彻底移除了对 YOLO 等复杂深度学习目标检测模型的依赖**。
+
+- **核心路线：** `纯视觉 OCR + Playwright 流程控制`
+- **视觉引擎：** `pytesseract` 进行全屏中英文本坐标定位，`OpenCV` 处理图像二值化与验证码缺口计算。
+- **动作执行：** `pyautogui` 实现拟人化鼠标轨迹移动与点击，防御平台风控；`Playwright` 用于深度的自动化表格填写。
+- **数据输出：** `pandas` 与 `openpyxl` 负责数据的清洗降噪与比对纠错。
+
+## 📁 目录结构
+
 ```text
-CopyrightVisualMonitor/
-├── main.py                # 核心程序入口
-├── gui_main.py            # Tkinter 桌面端界面
-├── yolo_detector.py       # YOLOv12n/v11n 推理层 (cv2.dnn)
-├── ocr_engine.py          # Tesseract 传统字符提取 (pytesseract)
-├── page_judger.py         # 业务页面动作流、数据拾取
-├── browser_utils.py       # 本地 Edge 调度管理器
-├── exporter.py            # 数据对比及 Excel 导出
+CCNU_Copyright_Hub/
+├── main.py                # 核心程序入口，串联监控与上传模式
+├── gui_main.py            # Tkinter 构建的统一控制台界面
+├── config_manager.py      # 用户凭据持久化与超参配置加载
+├── page_judger.py         # 基于 OCR 的纯视觉页面解析逻辑（滑动验证码处理核心）
+├── browser_utils.py       # 本地 Edge 浏览器调用与 Cookie 缓存管理
+├── exporter.py            # Excel 报表生成及本地快照记录
+├── navigator_r11.py       # (Playwright) 软著 R11 登记表自动上传流
+├── navigator_amend.py     # (Playwright) 软著问题自动补正流
 ├── requirements.txt       # Python 包依赖
-├── build_exe.bat          # PyInstaller 一键打包脚本
-├── README.md              # 部署及使用文档
-├── models/
-│   └── best.onnx          # 训练好的 YOLO 模型文件存放处
-└── tessdata/
-    ├── chi_sim.traineddata# Tesseract 中文语言包
-    ├── eng.traineddata    # 必须的英文字符支持包
-    └── osd.traineddata    # Tesseract 数据包
+├── build_exe.bat          # PyInstaller 一键打包构建脚本
+├── models/                # [保留目录] 预留给未来可能扩展的小模型
+├── tessdata/              # [必须配置] Tesseract 识别库 (chi_sim, eng, osd)
+├── build_assets/          # Pyinstaller `.spec` 构建配置存档
+└── tests/                 # 视觉特征与 OpenCV 几何识别测试脚本 
 ```
 
 ---
@@ -35,88 +44,51 @@ CopyrightVisualMonitor/
    ```cmd
    pip install -r requirements.txt
    ```
+   *注意：Playwright 需在初次运行前安装浏览器内核 `playwright install chromium`*
 
 2. **准备 Tesseract (必备)**
-   - 从 [Tesseract 官方预编译版或 GitHub 发行](https://github.com/UB-Mannheim/tesseract/wiki) 下载安装
-   - 提取 `tessdata` 文件夹包含 `chi_sim.traineddata` 等文件，放进本项目的根目录下 (如上方结构图所示)。
-   - **坑点防御**：如果没放对目录，Pyinstaller打包后 OCR 会闪退！
-
-3. **准备 YOLO 模型**
-   将训练好的 YOLOv12n 或 YOLOv11n 权重导出为 ONNX，放入 `models` 目录下。
-   命名必须是：`models/best.onnx`
+   - 从 [Tesseract 官方发布页](https://github.com/UB-Mannheim/tesseract/wiki) 下载安装。
+   - 提取 `tessdata` 文件夹（必须包含 `chi_sim.traineddata` 和 `eng.traineddata`），放入本项目根目录！
+   - **核心坑点**：如果缺少完整的中文字库，或者没放在主目录下，Pyinstaller 打包后的程序 OCR 将陷入假死或闪退！
 
 ---
 
-## 🎯 YOLO 标注与训练指南
+## 🤖 核心功能模块
 
-按要求标注 **15个具体类别**：
-1. `logo_ccp` (中国版权保护中心圆形logo)
-2. `btn_login_top` (首页右上角“登录”按钮)
-3. `btn_login_submit` (登录页蓝色“立即登录”按钮)
-4. `field_username` (登录页用户名输入框)
-5. `field_password` (登录页密码输入框)
-6. `nav_my_register` (左侧导航“我的登记”)
-7. `nav_software_register` (左侧“软件登记”—高亮时也用此)
-8. `tab_all` (顶部Tab) / `tab_draft` / `tab_to_submit` / `tab_wait_accept` / `tab_wait_review` / `tab_wait_correct` / `tab_to_issue` / `tab_issued` (这几类Tab，重点圈出文字+角标覆盖区域)
-9. `badge_red_number` (所有红色数字角标，圆形红色背景+白色数字，极度关键)
-10. `status_text` (表格中每一行的特定状态文字区域)
-11. `list_row` (表格中的每一行记录区域)
-12. `btn_view_detail` (每行“查看详情”蓝色链接)
-13. `btn_refresh` (页面右上角刷新图标)
-
-**如何标注 (以 20-60张图为例)：**
-1. 运行 `pip install labelImg` (或使用在线工具如 Roboflow)。
-2. 将浏览器分别处于这几张页面的多种状态。
-3. 把所有的红点数字标记为 `badge_red_number`，每个Tab区域框好对应名。
-4. 确保在标注格式中选择 YOLO，这会生成对应的 `classes.txt`。
-
-**推荐的训练命令：**
-```bash
-yolo task=detect mode=train model=yolo11n.pt data=dataset.yaml epochs=100 imgsz=640 batch=16
+启动项目：
+```cmd
+python main.py
 ```
-*(注：YOLOv12n目前在2026-02可能仍在早期体验版阶段，如果你使用的是 v12 的 pt 文件可以直接替换。在不确定的情况下，v11n 是完全稳定且效果极佳的退路。两者导出的 ONNX 结构相似，直接放入即可兼容。)*
 
-**导出 ONNX 命令：**
-```bash
-yolo export model=runs/detect/train/weights/best.pt format=onnx opset=12 simplify=True
-```
-导出后将对应的 `best.onnx` 放入本项目 `models/` 文件夹即可。
+### 模式一：📊 状态监控流水线
 
----
+**适用场景：** 每日批量刷新名下所有软著的审核状态，自动提取发放通知，生成 Excel 比对报告。
+**特性：**
+- **自适应强防抖算法**：避免人工误触导致的坐标系紊乱。
+- **拟人化滑块破解**：利用 OpenCV Canny 算子自动寻踪阴影边界，实现 3 段式贝塞尔曲线阻尼拖动验证。
+- **增量式 Excel 路由**：新旧状态纵向对比，弹窗高频提示“待补正”或“已发证”等突变词组。
 
-## 🤖 首次使用流程
+### 模式二：📤 自动上传提交流
 
-1. **配置本地账户数据目录**
-   程序默认运行会调用本地 Edge 并在同级产生一个 `edge_profile` 文件夹作为独立浏览器状态档案。
-   
-2. **首次手动免密登录赋权**
-   点击界面“🚀 立即开始视觉自检”。系统会拉起浏览器。
-   第一次看到登录页时，如果模型检测到了登录框（并弹出提示框阻塞），请手动在弹出的 Edge 页面完成账号、密码输入，并处理可能的滑块、短信等风控验证！
-   勾选任意“X天内免密登录”。登录成功后，返回小工具点击对话框“确定”让流程继续。
-   
-3. **日常无人值守执行**
-   后续由于 `edge_profile` 的持久化 cookie 缓存，打开就会直达登录状态，实现完全的全自动纯净运行。
+**适用场景：** 基于标准的 TXT 模板和 PDF 文件，实现“一键全自动填表登记”。
+**特性：**
+- **材料自解析**：自动读取业务文件夹下的 `xxx软件信息.txt` 及对应 PDF。
+- **Playwright DOM 接管**：绕过视觉抖动，直接对 input 和上传 input 接口注水，10秒内完成两页超级大表单填报。
+- **自动截取凭证**：关键锚点步骤自动保留截图至本地留存。
 
----
+### 模式三：🛠️ 自动补正响应流
 
-## ⏰ 定时任务自动化参考 (Windows)
-
-如果不希望手动去点，可以结合 Windows 任务计划程序：
-1. 按下 `Win+R`，输入 `taskschd.msc` 打开。
-2. 创建基本任务 -> 名称 "软著自动查询"。
-3. 触发器选每天 12:00 或其他时间。
-4. 操作选“启动程序”，选中打包好的 `CopyrightVisualMonitor_v2.exe`。
-5. （如果希望纯后台静默，可在后续二次开发中为 `main.py` 增加静默启动参数并在 GUI 中 bypass 掉窗口弹出。）
+**适用场景：** 针对被版权中心要求补正的存量单据进行材料纠错覆盖重传。
 
 ---
 
 ## ❓ 常见问题 FAQ
 
-**Q1：打包后程序突然闪退？**
-✅ 检查是不是忘了把 `models` 和 `tessdata` 里的文件复制全。`build_exe.bat` 已包含相关命令。
+**Q1：为何抛弃 YOLO 而转用纯 OCR？**
+✅ 国版中心的前端 UI 及徽标颜色改版频率较高。YOLO 必须经历漫长痛苦的重新标注和算力训练才能适应。基于 Tesseract 中文 OCR 的 `page_judger` 能够免疫按钮颜色和方位的改变，只要文字词根存在，就能锁定坐标中点。
 
-**Q2：OCR读出来的全是乱码，或识别不出数字？**
-✅ `ocr_engine.py` 针对性使用了图像放缩和反色算法增强 `tesseract` 的识别率。如果效果依旧不好，请检查 `tessdata` 英语和数字库文件是否完备。
+**Q2：运行中鼠标乱飘，或者点击老是偏几公分？**
+✅ Windows 缩放补偿问题。在 4K 屏幕下，请右键 python.exe 或打包后的程序，勾选“高 DPI 缩放替代”。在代码中我们已经写入了 `ctypes.windll.user32.SetProcessDPIAware()`，正常情况下已自动修正偏差。
 
-**Q3：YOLO 一直框不准某个红色角标？**
-✅ YOLO推理存在置信度问题，可利用桌面窗口左侧的拉条将“置信度”降低到 **0.4** 或更低进行尝试；并且确保你训练时这部分有足够多样性的截图。
+**Q3：验证码拼图无法滑动到位？**
+✅ 可在 GUI 界面将 **自适应延迟倍率** 调高（向右拉至“稳定”侧），放缓拖动速度；OpenCV 因浏览器字体发光特效有时会导致 15 像素以内的计算偏差，程序会在 4 次失败后自适应拉大边界偏移量。如果连续多次失败，请在弹窗时手动接管并辅助划动这一下。
