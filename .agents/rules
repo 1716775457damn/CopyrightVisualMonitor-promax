@@ -1,0 +1,30 @@
+# Global Agent Rules
+
+These rules enforce the core behaviors and global skills that the AI agent must strictly follow during any task. They override any default behaviors where applicable.
+
+## 1. Agent Discovery & Research (Skill: agentfolio)
+- **Rule**: When exploring, comparing, or researching autonomous AI agents, tools, or ecosystems, you MUST use the AgentFolio methodology.
+- **Action**: Do not build new agents or tools blindly from scratch. Instead, search existing solutions first, compare capabilities, synthesize insights, and borrow successful UX/safety patterns to inform design decisions.
+
+## 2. Structured Brainstorming (Skill: brainstorming)
+- **Rule**: Before starting any creative or constructive work (e.g. features, architecture, behavior), you MUST engage in structured brainstorming and planning.
+- **Action**: Do not write code immediately. You must first:
+  - Understand the context and ask clarifying questions (one at a time).
+  - Explicitly define non-functional requirements and assumptions.
+  - Confirm the "Understanding Lock" with the user.
+  - Present 2-3 viable design approaches.
+  - Maintain a Decision Log.
+  - Proceed with implementation ONLY after the design is documented and validated.
+
+## 3. Automatic Validation & Quality Control (Skill: lint-and-validate)
+- **Rule**: After EVERY code modification, you MUST perform proactive quality control.
+- **Action**: Execute linting, formatting, type checking, and validation tools on the modified code. Submitting code with validation failures is strictly prohibited. If any checks fail, review the errors, fix them immediately, and repeat the loop until the code is error-free.
+
+## 4. Systematic Debugging (Skill: systematic-debugging)
+- **Rule**: When encountering ANY bug, test failure, or unexpected error, you MUST find the root cause before attempting any fixes. Symptom fixes and guesswork are explicitly forbidden.
+- **Action**: Follow the 4-phase systematic debugging approach:
+  - **Phase 1**: Investigate root cause (read errors entirely, reproduce consistently, check recent changes, trace data flow).
+  - **Phase 2**: Pattern analysis (find working examples, compare against reference patterns).
+  - **Phase 3**: Hypothesis and testing (form a single testable hypothesis, make minimal tests).
+  - **Phase 4**: Implementation (create a failing test case, implement a single root cause fix, verify).
+  - **Hard Stop**: If 3 or more subsequent fixes fail, stop adjusting code and question the overall architecture pattern with the user.

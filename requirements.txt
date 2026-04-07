@@ -1,0 +1,9 @@
+opencv-python>=4.10.0
+mss>=9.0.2
+pyautogui>=0.9.54
+pytesseract>=0.3.10
+pandas>=2.1.0
+openpyxl>=3.1.2
+win10toast>=0.9.0
+Pillow>=10.2.0
+playwright>=1.40.0
