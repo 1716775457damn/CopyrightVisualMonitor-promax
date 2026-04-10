@@ -73,7 +73,6 @@ def execute_amend_flow(software_name: str, applicant_type: str, wait_callback, c
             # 2. 寻找对应的软件名称，并点击“去补正”按钮
             logger(f"正在智能寻找软件名称为 '{software_name}' 的【去补正】按钮...")
             try:
-                # 寻找包含该名称的列表项内容区域
                 row_locator = target_page.locator(f"xpath=//li[contains(., '{software_name}')] | //tr[contains(., '{software_name}')]")
                 if row_locator.count() > 0:
                      btn = row_locator.first.locator("button, span.el-button").filter(has_text="去补正").first
@@ -81,40 +80,42 @@ def execute_amend_flow(software_name: str, applicant_type: str, wait_callback, c
                           logger("✅ 成功通过关联匹配找到目标【去补正】按钮！按下...")
                           btn.click(timeout=5000)
                      else:
-                          # 回退到根据用户提供的精准XPATH执行点击第一个
-                          logger("⚠️ 未能在匹配行找到去补正按钮，降级点击屏幕第一个...")
-                          btn_xpath = "/html/body/div[2]/div[2]/div/div[2]/div[3]/div[1]/ul[2]/li[1]/div[4]/button"
-                          target_page.locator(f"xpath={btn_xpath}").click(timeout=5000)
+                          logger("⚠️ 未能在匹配行找到去补正按钮，降级全局搜索去补正...")
+                          target_page.locator("button").filter(has_text=re.compile("去补正")).first.click(timeout=5000)
                 else:
-                    logger(f"⚠️ 未在列表中扫描到字样 '{software_name}' ，将降级点击列表第一个按钮。")
-                    btn_xpath = "/html/body/div[2]/div[2]/div/div[2]/div[3]/div[1]/ul[2]/li[1]/div[4]/button"
-                    target_page.locator(f"xpath={btn_xpath}").click(timeout=5000)
+                    logger(f"⚠️ 未在列表中扫描到字样 '{software_name}' ，降级全局搜索去补正。")
+                    target_page.locator("button").filter(has_text=re.compile("去补正")).first.click(timeout=5000)
             except Exception as e:
-                logger(f"⚠️ 寻找去补正按钮产生异常: {e}，直接用坐标系强制盲点第一个...")
-                btn_xpath = "/html/body/div[2]/div[2]/div/div[2]/div[3]/div[1]/ul[2]/li[1]/div[4]/button"
-                target_page.locator(f"xpath={btn_xpath}").click(timeout=5000)
+                logger(f"⚠️ 寻找去补正按钮产生异常: {e}，再次回退尝试盲点...")
+                target_page.locator("button").filter(has_text=re.compile("去补正")).first.click(timeout=5000)
                 
             smart_wait(3000)
             
             # 3. 补正流程界面前置依次点击
             logger(f"申请人类别选择为: {'代理申请' if applicant_type == 'proxy' else '自己申请'}")
-            first_xpath = "/html/body/div[2]/div[2]/div[2]/div/div[2]" if applicant_type == "proxy" else "/html/body/div[2]/div[2]/div[2]/div/div[1]"
+            
+            # 使用懒加载的语义 Locator
+            first_loc = target_page.locator("xpath=(//div[contains(text(), '代理申请') or contains(text(), '代理他人')])[last()]") if applicant_type == "proxy" else target_page.locator("xpath=(//div[contains(text(), '自己申请') or contains(text(), '作为著作权人')])[last()]")
+            next_btn_loc = target_page.locator("xpath=(//button[contains(text(), '下一步') or contains(text(), '确认')])[last()] | //button[contains(@class, 'primary') and not(contains(text(), '返回'))]").last
+            gen_materials_loc = target_page.locator("xpath=(//button[contains(text(), '生成') or contains(text(), '确认') or contains(text(), '提取')])[last()] | //div[contains(text(), '确认')]").last
             
             clicks = [
-                first_xpath,
-                "/html/body/div[2]/div[2]/div[2]/div[4]/button[2]",
-                "/html/body/div[2]/div[2]/div[2]/div[7]/button[2]",
-                "/html/body/div[2]/div[2]/div[2]/div[13]/div/div/div[2]/div/div[1]/div[2]"
+                first_loc,
+                next_btn_loc,
+                next_btn_loc,
+                gen_materials_loc
             ]
             
             logger("开始执行自动提交流程的深层菜单步进...")
-            for index, xpath in enumerate(clicks):
+            for index, loc in enumerate(clicks):
                 logger(f"正在进行自动化前进操作 [{index + 1}/{len(clicks)}]...")
-                elem = target_page.locator(f"xpath={xpath}")
-                elem.wait_for(state="visible", timeout=10000)
-                elem.scroll_into_view_if_needed()
-                smart_wait(500)
-                elem.click()
+                try:
+                    loc.wait_for(state="visible", timeout=10000)
+                    loc.scroll_into_view_if_needed()
+                    smart_wait(500)
+                    loc.click(timeout=8000)
+                except Exception as e:
+                    logger(f"⚠️ 第 {index + 1} 步点击可能发生了偏移或无需点击 (跳过): {e}")
                 smart_wait(2000)
             
             logger("✅ 已自动推进到达发证文档上传页面。")
@@ -127,15 +128,13 @@ def execute_amend_flow(software_name: str, applicant_type: str, wait_callback, c
             logger("====== ▶ 继续 ======")
             logger("用户确认完成，继续执行后续步骤...")
             
-            post_upload_xpath_1 = "/html/body/div[2]/div[2]/div[2]/div[4]/button[2]"
-            post_upload_elem_1 = target_page.locator(f"xpath={post_upload_xpath_1}")
+            post_upload_elem_1 = target_page.locator("xpath=(//button[contains(text(), '下一步') or contains(text(), '提交')])[last()] | //button[contains(@class, 'primary')]").last
             post_upload_elem_1.scroll_into_view_if_needed()
             smart_wait(500)
             post_upload_elem_1.click(timeout=10000)
             smart_wait(2000)
             
-            post_upload_xpath_2 = "/html/body/div[2]/div[2]/div[2]/div[4]/div/div/div/div[1]/div/div/div[2]/a/span"
-            post_upload_elem_2 = target_page.locator(f"xpath={post_upload_xpath_2}")
+            post_upload_elem_2 = target_page.locator("xpath=(//span[contains(text(), '获取验证码')]) | //button[contains(text(), '获取')] | //a[contains(text(), '验证码')]").last
             post_upload_elem_2.scroll_into_view_if_needed()
             smart_wait(500)
             post_upload_elem_2.click(timeout=10000)

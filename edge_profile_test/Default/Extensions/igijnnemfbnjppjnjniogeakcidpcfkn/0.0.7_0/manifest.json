@@ -1,0 +1,22 @@
+{
+   "action": {
+      "default_popup": "popup.html"
+   },
+   "background": {
+      "service_worker": "background.js"
+   },
+   "description": "有道学术加速器",
+   "icons": {
+      "18": "yd-logo-18.png",
+      "36": "yd-logo-36.png",
+      "54": "yd-logo-54.png",
+      "72": "yd-logo-72.png"
+   },
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApCbDeT1k0ldJ8azAv3g57iPw8ZeyTkdwx5o/znaB0eiAfW9lEMtFGCef4KioR7c3jHQFv0J4mW4ZnfmEefMcKTnBS0vCZx2XlJw1TEXXbGtqWoBz2MhBbfpNp772yxOWX8l+7Se574FbNdOJmm0qnHhJhQIuF9BcCFDro6Iw72eGlhYNh1Q10HFZbw6uDhc6VHDHZ9/BuE5M4ZXs6PrCBk6HUC6AZ+88cExYTbRLJHexpplXtdC0JPvyW8vFsinPaJrGPiyppYX5d9c5fMmc1P4I7NVyX4WcZwupuvVY6khJHTIj/TZZ/efNEirsK03p5RsQpILwYxqvmCR/c9+BtQIDAQAB",
+   "manifest_version": 3,
+   "minimum_chrome_version": "88",
+   "name": "有道学术加速器",
+   "permissions": [ "proxy", "nativeMessaging" ],
+   "update_url": "https://clients2.google.com/service/update2/crx",
+   "version": "0.0.7"
+}

@@ -28,24 +28,26 @@ dist/
 build_venv/
 
 # UI/Automation
-edge_profile/           # Contains cookies/session
-screenshots/            # Local run screenshots
-results/                # Local run data
+edge_profile/
+screenshots/
+results/
 *.log
 debug_*.png
 debug_*.txt
 debug_last_screen.png
 
 # User Config
-config.json             # To be created from template by user
+config.json
+.env
+app.log
 
 # OS files
 .DS_Store
 Thumbs.db
 
 # Project specific
-软著自动化.zip           # Large file
-软著登记状态追踪.xlsx     # Personal data
+软著自动化.zip
+软著登记状态追踪.xlsx
 result.json
 tmp_test.py
-test_*.py               # Local test scripts
+test_*.py

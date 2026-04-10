@@ -22,6 +22,15 @@ if platform.system() == "Windows":
 # 显式配置 tesseract.exe 路径，避免环境变量未生效的问题
 import sys
 
+# 【务实平替版新增】初始化 Airtest 网易视觉引擎内核
+try:
+    from airtest.core.api import auto_setup, connect_device, exists, touch, Template
+    auto_setup(__file__)
+    # 强制劫持全量 Windows 桌面绘图层
+    connect_device("Windows:///")
+except ImportError:
+    print("[ERROR] Airtest 未正确安装，请检查环境！")
+
 # 获取程序运行的根目录 (兼容源码运行和打包后的 exe 运行)
 if getattr(sys, 'frozen', False):
     # 打包后的系统路径 (PyInstaller 运行时路径)
@@ -52,24 +61,19 @@ def capture_screen():
         img = np.array(sct.grab(monitor))
         return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR) # OpenCV标准的BGR格式
 
-def find_text_on_screen(img, target_text, lang='chi_sim', binarize=False):
-    """使用 Tesseract OCR 查找指定文本在屏幕上的坐标中心"""
-    # 预处理：灰度化以提高识别率
+def extract_ocr_data(img, lang='chi_sim', binarize=False):
+    """一次性读取全屏图，生成带坐标的字符块列表，构建并返回一套 OCR Data 对象。"""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     
     scale = 1.0
     if binarize:
-        # 针对浅色/浅蓝色分页器文字，放大两倍并进行反相二值化提取，极大提高识别率
         scale = 2.0
         gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
         _, gray = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
     
-    # 获取详细的检测数据，包括坐标
-    # --psm 11 适合寻找稀疏零散的文本段落
     data = pytesseract.image_to_data(gray, lang=lang, config='--psm 11', output_type=pytesseract.Output.DICT)
     
     all_texts = []
-    # 重组所有的text并记录每个字符的包围盒，保证字符串索引和坐标数组索引绝对一对一映射
     valid_boxes = []
     for i in range(len(data['text'])):
         text = str(data['text'][i]).replace(' ', '').strip()
@@ -86,11 +90,39 @@ def find_text_on_screen(img, target_text, lang='chi_sim', binarize=False):
             
     full_ocr_str = "".join(b['char'] for b in valid_boxes)
     
-    # 用滑动窗口的形式在合成的字符串里寻找 target_text
-    idx = full_ocr_str.find(target_text)
+    return {
+        'valid_boxes': valid_boxes,
+        'full_ocr_str': full_ocr_str,
+        'all_texts': all_texts
+    }
+
+
+def find_target_in_ocr(ocr_data, target_text, fuzzy=False):
+    """在提取好的 OCR 缓存数据中寻找目标文字"""
+    valid_boxes = ocr_data['valid_boxes']
+    full_ocr_str = ocr_data['full_ocr_str']
+    all_texts = ocr_data['all_texts']
+    
+    target_text = target_text.replace(" ", "")
+    idx = -1
+    
+    if fuzzy and len(target_text) >= 3:
+        import difflib
+        best_ratio = 0
+        best_idx = -1
+        # 滑动窗口查找最相似的部分
+        for i in range(len(full_ocr_str) - len(target_text) + 1):
+            window = full_ocr_str[i:i+len(target_text)]
+            ratio = difflib.SequenceMatcher(None, target_text, window).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_idx = i
+        if best_ratio >= 0.8:  # 允许大约错1个字
+            idx = best_idx
+    else:
+        idx = full_ocr_str.find(target_text)
+        
     if idx != -1:
-        # 找到了，计算联合Bounding Box
-        # 提取相关字符的box
         match_boxes = valid_boxes[idx:idx+len(target_text)]
         min_x = min(b['x'] for b in match_boxes)
         min_y = min(b['y'] for b in match_boxes)
@@ -102,6 +134,34 @@ def find_text_on_screen(img, target_text, lang='chi_sim', binarize=False):
         return (cx, cy), (min_x, min_y, max_x - min_x, max_y - min_y), all_texts
 
     return None, None, all_texts
+
+def find_all_targets_in_ocr(ocr_data, target_text):
+    """返回 OCR 结果中所有匹配 target_text 的目标中心坐标列表"""
+    valid_boxes = ocr_data['valid_boxes']
+    full_ocr_str = ocr_data['full_ocr_str']
+    target_text = target_text.replace(" ", "")
+    results = []
+    start = 0
+    while True:
+        idx = full_ocr_str.find(target_text, start)
+        if idx == -1:
+            break
+        match_boxes = valid_boxes[idx:idx+len(target_text)]
+        min_x = min(b['x'] for b in match_boxes)
+        min_y = min(b['y'] for b in match_boxes)
+        max_x = max(b['x'] + b['w'] for b in match_boxes)
+        max_y = max(b['y'] + b['h'] for b in match_boxes)
+        cx = min_x + (max_x - min_x) // 2
+        cy = min_y + (max_y - min_y) // 2
+        results.append((cx, cy))
+        start = idx + 1
+    return results
+
+
+def find_text_on_screen(img, target_text, lang='chi_sim', binarize=False, fuzzy=False):
+    """向下兼容的包裹函数，支持外部直接传入截图并检索"""
+    ocr_data = extract_ocr_data(img, lang=lang, binarize=binarize)
+    return find_target_in_ocr(ocr_data, target_text, fuzzy=fuzzy)
 
 class PageJudger:
     def __init__(self, logger_callback=print, account="", password=""):
@@ -149,196 +209,228 @@ class PageJudger:
         return False
 
     def process_flow(self, require_login_callback):
-        self.log("分析页面当前状态...")
+        self.log("启动纯正 Airtest 视觉监控引擎...")
         for attempt in range(4):
             time.sleep(2.5) # 渲染缓冲时间
-            img = capture_screen()
             
-            # 状态1：核心提取页
-            center, _, _ = find_text_on_screen(img, "全部", lang='chi_sim') # 去除eng，增强纯中文识别
-            if center:
-                # 为了保险，同时找 "软件登记"
-                soft_center, _, _ = find_text_on_screen(img, "软件登记", lang='chi_sim')
-                if soft_center:
-                    self.log("成功定位到核心软件登记列表页。")
+            # 状态1：如果在系统内（判断是否滑块已经通过并成功登录！）
+            try:
+                # 方案 A：工业级 Airtest 定位（如果您截图了 button/quanbu.png）
+                if os.path.exists("button/quanbu.png") and exists(Template(r"button/quanbu.png", threshold=0.7)):
+                    self.log("✅ [Airtest] 识别到后台专属元素 [全部] 标签，判定为：已核心系统。")
                     return True
+            except Exception as e:
+                pass
+                
+            try:
+                # 方案 B：传统低准确率 OCR 备胎
+                img = capture_screen()
+                ocr_data = extract_ocr_data(img, lang='chi_sim')
+                center, _, _ = find_target_in_ocr(ocr_data, "全部")
+                if center:
+                    soft_center, _, _ = find_target_in_ocr(ocr_data, "软件登记")
+                    if soft_center:
+                        self.log("✅ [OCR识别] 模糊识别到控制台字样，判定为：已双重进入核心页。")
+                        return True
+            except Exception as e:
+                self.log(f"后台检测出现轻微异常: {e}")
 
-            # 状态2：在首页但未进入系统
-            top_login_center, _, _ = find_text_on_screen(img, "登录", lang='chi_sim')
-            # 尝试区分这到底是顶部小登录按钮，还是登录大面板。通常右上角的按钮 y 坐标较小(< 150)
-            if top_login_center and top_login_center[1] < 150:
-                self.log("在首页且未登录，点击头部登录按钮...")
-                self.interruptible_servo_move(top_login_center[0], top_login_center[1])
-                time.sleep(2)
-                continue
-                
-            # 状态3：在系统内但未点击软件登记
-            soft_nav_center, _, _ = find_text_on_screen(img, "软件登记", lang='chi_sim')
-            if soft_nav_center:
-                self.log("登录成功，点击左侧【软件登记】菜单...")
-                self.interruptible_servo_move(soft_nav_center[0], soft_nav_center[1])
-                continue
-                
-            # 状态4：未登录，并位于登录面板页 (需要自动输入账号密码)
-            login_panel_center, _, all_texts = find_text_on_screen(img, "账号登录", lang='chi_sim')
-            pwd_login_center, _, _ = find_text_on_screen(img, "密码登录", lang='chi_sim')
-            
-            # 增强宽松匹配：只要屏幕上有 登录 或者 密码 的字眼且不在顶部，也认为是登录面板
-            if login_panel_center or pwd_login_center or (top_login_center and top_login_center[1] >= 150):
-                self.log("检测到登录面板，准备先行自动输入账号密码...")
-                
-                # 寻找输入框提示词定位输入框
-                user_hint_center, _, _ = find_text_on_screen(img, "用户名", lang='chi_sim')
-                
-                if user_hint_center:
-                    target_cx = user_hint_center[0]
-                    target_cy = user_hint_center[1]
+            # 状态2：在首页但未进入系统（头部登录按钮）
+            try:
+                top_login_center, _, _ = find_target_in_ocr(ocr_data, "登录")
+                if top_login_center and top_login_center[1] < 150:
+                    self.log("在首页且未登录，点击头部登录按钮...")
+                    self.interruptible_servo_move(top_login_center[0], top_login_center[1])
+                    time.sleep(2)
+                    continue
+            except:
+                pass
+
+            # 状态4：原拓扑视觉抽取 -> 现已升级为 Airtest 工业级特征制导
+            try:
+                # 利用 Airtest 极度鲁棒的特征匹配无视灰度和分辨率
+                is_login_page = False
+                try:
+                    if exists(Template(r"button/zhanghao.png", threshold=0.7)):
+                        is_login_page = True
+                except:
+                    pass
+
+                if is_login_page:
+                    self.log("【Airtest 视觉引擎】成功解构面积极度恶劣的[账号输入框]轮廓！准备暴力注入...")
                     
-                    # 先将鼠标移动到“请输入用户名”并在那里点击
-                    reached = self.interruptible_servo_move(target_cx, target_cy, click=True)
-                    if reached:
-                        self.log("瞄准账号框，开始输入账号...")
-                        pyautogui.typewrite(self.account, interval=0.03)
-                        time.sleep(0.3)
-                        
-                        # 再移动并点击密码框
-                        # 搜索“入密码”而不是“密码”，避免匹配到登录类型选择栏的“密码登录”
-                        pwd_hint_center, _, _ = find_text_on_screen(img, "入密码", lang='chi_sim')
-                        if not pwd_hint_center:
-                            pwd_hint_center, _, _ = find_text_on_screen(img, "请密码", lang='chi_sim')
-                        if pwd_hint_center:
-                            self.log("移动至密码框，准备输入密码...")
-                            self.interruptible_servo_move(pwd_hint_center[0], pwd_hint_center[1], click=True)
-                            pyautogui.typewrite(self.password, interval=0.03)
-                            time.sleep(0.3)
-                            
-                    # 最后移动到立即登录按钮并点击！
-                    login_btn_center, _, _ = find_text_on_screen(img, "即登录", lang='chi_sim')
-                    if login_btn_center:
-                        self.log("将鼠标移动至【立即登录】并点击...")
-                        self.interruptible_servo_move(login_btn_center[0], login_btn_center[1], click=True)
-                        time.sleep(2)  # 等待验证码弹出
-                        
-                        # 【重要优化】检测并尝试自动处理滑块验证码
-                        # 此处如果检测到验证码，将尝试最多 5 次自动处理，不再直接弹窗拦截
-                        if self.solve_slider_captcha():
-                            self.log("滑块验证码处理完毕，等待页面跳转...")
-                            time.sleep(3)
-                            continue  # 进入下一轮状态判断
+                    touch(Template(r"button/zhanghao.png", threshold=0.7))
+                    pyautogui.hotkey('ctrl', 'a')
+                    time.sleep(0.1)
+                    pyautogui.press('backspace')
+                    pyautogui.typewrite(self.account, interval=0.03)
+                    time.sleep(0.3)
+                    
+                    self.log("【Airtest 视觉引擎】锁定[密码输入框]轮廓...")
+                    touch(Template(r"button/mima.png", threshold=0.7))
+                    pyautogui.hotkey('ctrl', 'a')
+                    time.sleep(0.1)
+                    pyautogui.press('backspace')
+                    pyautogui.typewrite(self.password, interval=0.03)
+                    time.sleep(0.3)
+                    
+                    self.log("【Airtest 视觉引擎】精准制导[登录按钮]！发射！")
+                    touch(Template(r"button/denglu.png", threshold=0.7))
+                    time.sleep(2.5)
+                    
+                    if hasattr(self, 'solve_slider_captcha') and self.solve_slider_captcha():
+                        self.log("【联动模块】智能滑块验证码突围成功，登录已直达，强制向主放行...")
+                        time.sleep(3)
+                        return True # 直接跨过验证，直接宣告胜利！
 
-                    self.log("账号和密码均已顺畅输入完毕！")
+                    self.log("主登录动作发射完毕，暂时交回鼠标权！如果有残留验证码请手动推一下～")
+                    require_login_callback()
+                    return True # 人工确认后也直接宣告胜利！
+            except Exception as e:
+                self.log(f"【降维打击异常】Airtest 执行流被干扰: {e}")
             
-            self.log("已暂停视觉控制！此时您可以移动鼠标接管并进行滑动拼图验证...")
-            require_login_callback()
-            # 等待用户点确定后，由于已登录，下一轮重试将落入状态3
-            continue
-        else:
-            if attempt == 3:
-                 self.log("最后一次重试，保存调试截图和OCR日志...")
-                 cv2.imwrite("debug_last_screen.png", img)
-                 with open("debug_ocr_texts.txt", "w", encoding="utf-8") as f:
-                     f.write("\n".join(all_texts))
-                 self.log("识别到的文本已保存到 debug_ocr_texts.txt。请查看提取内容是否准确。")
+            # 由于可能处于任何未知页或读取错误，等待下一次循环重试
+            self.log(f"第 {attempt + 1} 次制导尝试似乎未遇上熟知界面，准备重试...")
 
-        self.log("多次重试仍未能定位到有效页面。")
+        self.log("多次重试仍未能定位到有效页面，制导引擎挂起。")
         return False
 
     def solve_slider_captcha(self):
         """
-        自动检测屏幕上的滑块验证码并通过 OpenCV 计算缺口距离进行拟人滑动
+        自动检测屏幕上的滑块验证码并通过 OpenCV 计算缺口距离进行拟人滑动，
+        纯正支持 Airtest 锚点动态分辨率适应 (1080p, 4K 通杀)
         """
         self.log("正在扫描屏幕，等待滑动验证码加载...")
+        time.sleep(2) # 等待动画
         
-        bbox = None
-        img = None
-        all_texts = []
-        for wait_i in range(5):
-            img = capture_screen()
-            
-            # 使用更广泛的关键词组合
-            # 由于 OCR 偶尔会将“安全验证”识别为“安全验证码”或“完成验证”等，我们尝试多个子串
-            for keyword in ["安全验证", "安全测试", "完成验证", "请完成", "完成安全", "验证码"]:
-                _, bbox, all_texts = find_text_on_screen(img, keyword, lang='chi_sim')
-                if bbox:
-                    self.log(f"✅ 发现验证码特征 [{keyword}]！启动几何锁定与 OpenCV 计算引擎...")
-                    break
-            
-            if bbox:
-                break
-                
-            self.log(f"  ...未看到验证码，继续等待加载 ({wait_i+1}/5)")
-            time.sleep(2)
-            
-        if not bbox:
-            # 帮助调试：如果没找到，在日志里输出前5个识别到的词，看看 Tesseract 到底看成了什么
-            debug_sample = " | ".join(all_texts[:5]) if all_texts else "空"
-            self.log(f"当前屏幕未检测到验证码标题特征 (这可能意味着验证码尚未弹出，或已被自动关闭)。提取摘要: {debug_sample}")
-            return False
-            
-        # 增加总尝试轮数到 10 轮 (5次尝试 + 自动重置后的5次尝试)
+        # 增加总尝试轮数到 10 轮
         for captcha_attempt in range(10):
-            self.log(f"✅ 第 {captcha_attempt + 1} 次获取滑块验证码特征...")
-            if captcha_attempt > 0:
-                img = capture_screen()
-                title_hint, bbox, _ = find_text_on_screen(img, "安全验证", lang='chi_sim')
-                if not title_hint:
-                    title_hint, bbox, _ = find_text_on_screen(img, "请完成", lang='chi_sim')
+            self.log(f"✅ 第 {captcha_attempt + 1} 次弹性捕获滑块验证码特征...")
+            
+            try:
+                # [核心改造] 放弃 OCR 搜字，转为使用 Airtest 获取绝对锚点
+                pos_title = exists(Template(r"button/captcha_title.png", threshold=0.7))
+                pos_btn = exists(Template(r"button/slider_btn.png", threshold=0.7))
                 
-                if not title_hint:
-                    self.log("滑块验证码已消失，判定为验证成功！")
-                    return True
+                if (not pos_title) or (not pos_btn):
+                    if captcha_attempt > 0:
+                        self.log("屏幕上的验证码核心组件已消失，判定为验证码被消灭！")
+                        # --- 新增的特殊流程后续点击 ---
+                        try:
+                            # 预判可能会弹出的“跳过”按钮（比如防沉迷、绑定手机或者纯系提示弹窗）
+                            if exists(Template(r"button/tiaoguo.png", threshold=0.7)):
+                                self.log(">> 捕捉到附属弹窗，点按 [tiaoguo/跳过] 按钮！")
+                                touch(Template(r"button/tiaoguo.png", threshold=0.7))
+                                time.sleep(1)
+                        except Exception as e:
+                            pass
+                            
+                        return True
+                    else:
+                        self.log("尚未全量检测到[验证码标题]与[底层拖动滑块]，如果验证码没弹出来请忽略，继续等待加载...")
+                        time.sleep(2)
+                        continue
+            except Exception as e:
+                self.log(f"Airtest 锚点探测异常，防抱死处理: {e}")
+                time.sleep(2)
+                continue
             
-            sx, sy, sw, sh = bbox
+            # 【核心弹性算法】基于头尾坐标动态开辟搜索空间！完全摆脱传统分辨率 340*212 的死定宽高
+            y_t = pos_title[1]
+            y_b = pos_btn[1]
+            x_b = pos_btn[0]
             
-            # 基于“请完成安全验证”标题的严格几何定位
-            # 拼图图片通常定死在标题框正下方约 15 像素处，尺寸绝大多数约为 340x212
-            img_top = sy + sh + 15
-            img_bottom = img_top + 212
-            img_left = sx - 20
-            img_right = img_left + 340
-            
-            # 边界安全保护
+            img = capture_screen()
             h, w = img.shape[:2]
-            img_top, img_bottom = max(0, img_top), min(h, img_bottom)
-            img_left, img_right = max(0, img_left), min(w, img_right)
+            
+            # 拼图区域垂直方向一定在标题和按钮这两者之间，各向内收紧一点点像素剔除外框
+            img_top = max(0, int(y_t + 20))
+            img_bottom = min(h, int(y_b - 20))
+            
+            # 拼图水平距离大概是从滑块按钮中心点稍左侧，向右延伸至适当长度 (大约1.6倍高宽比或固定400)
+            img_left = max(0, int(x_b - 30))
+            elastic_width = max(380, int(abs(y_b - y_t) * 1.5))
+            img_right = min(w, int(img_left + elastic_width))
             
             captcha_img = img[img_top:img_bottom, img_left:img_right]
             
+            # 如果截成了负数或极小图像说明获取极其异常
+            if captcha_img.shape[0] < 50 or captcha_img.shape[1] < 50:
+                self.log("动态框选失败，高度/宽度异常，等待重试...")
+                time.sleep(2)
+                continue
+                
             gray = cv2.cvtColor(captcha_img, cv2.COLOR_BGR2GRAY)
             edges = cv2.Canny(gray, 100, 200)
             ch, cw = edges.shape
             
-            # 假设拼图块在左侧 65 像素内（标准滑块拼图块大小约为 50-60px）
-            slider_width_estimate = 65
-            slider_template = edges[:, :slider_width_estimate]
-            search_area = edges[:, slider_width_estimate:]
+            # --- 【优化】动态抓取拼图轮廓作为匹配模版 ---
+            # 提取左侧最多80像素（或者大概四分之一宽）的区域寻找拼图的闭合轮廓
+            search_bound = min(cw, max(80, int(cw * 0.2)))
+            edges_left = edges[:, :search_bound]
+            contours, _ = cv2.findContours(edges_left, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            slider_template = edges[:, :search_bound] # 兜底模版
+            slider_x = 0
+            slider_w = search_bound
+            y_start = 0
+            y_end = ch
+            
+            if contours:
+                valid_contours = [c for c in contours if cv2.contourArea(c) > max(40, ch * 0.15)]
+                if valid_contours:
+                    # 找到最大面积的闭合轮廓作为拼图块
+                    c = max(valid_contours, key=cv2.contourArea)
+                    x, y, bw, bh = cv2.boundingRect(c)
+                    pad = 3
+                    y_start = max(0, y - pad)
+                    y_end = min(ch, y + bh + pad)
+                    x_start = max(0, x - pad)
+                    x_end = min(search_bound, x + bw + pad)
+                    
+                    slider_template = edges[y_start:y_end, x_start:x_end]
+                    slider_x = x_start
+                    slider_w = x_end - x_start
+            
+            # 从拼图块右侧的其余部分中寻找坑位
+            search_area_x_start = slider_x + slider_w
+            # 限制在相同高度条带内寻找，极大地排除了其它位置的垂直噪点干扰
+            search_area = edges[y_start:y_end, search_area_x_start:]
+            
+            if search_area.shape[1] < slider_template.shape[1]:
+                self.log("截区空间不足以构成匹配，忽略本次")
+                time.sleep(1)
+                continue
             
             # 纯粹的结构化匹配，无视背景分数噪音
             res = cv2.matchTemplate(search_area, slider_template, cv2.TM_CCOEFF)
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
             
-            cv2.imwrite(f"debug_captcha_edges_{captcha_attempt}.png", edges)
+            try:
+                cv2.imwrite(f"debug_captcha_edges_{captcha_attempt}.png", edges)
+            except:
+                pass
             
-            target_x_offset = max_loc[0] + slider_width_estimate
-            self.log(f"🎯 OpenCV 原生计算缺口距离: {target_x_offset} 像素。")
+            # 滑动距离 = 匹配结果X偏移 + 搜索区起始X - 原拼图所在X
+            target_x_offset = max_loc[0] + search_area_x_start - slider_x
+            self.log(f"🎯 OpenCV 弹性引擎计算缺口距离: {target_x_offset} 像素。")
             
             # 往往由于拼图块自身带有外发光/透明边框，或者网页 CSS 缩放等原因
             # [自适应策略]：如果是第一轮失败，后续尝试微调偏移量
-            CALIBRATION_OFFSET = 13 
+            CALIBRATION_OFFSET = 12 
             if captcha_attempt > 3:
-                 CALIBRATION_OFFSET = 11 # 稍微减小，防止由于惯性冲过头
+                 CALIBRATION_OFFSET = 10 # 稍微减小，防止由于惯性冲过头
             elif captcha_attempt > 6:
                  CALIBRATION_OFFSET = 15 # 稍微加大
                  
             target_x_offset += CALIBRATION_OFFSET
             self.log(f"🔧 [精度微调] 为了防止滑动不足，增加边框偏移量 {CALIBRATION_OFFSET}，最终物理滑动: {target_x_offset} 像素。")
             
-            # 定位实际的滑块按钮，按钮固定在图片左下角的随动轨道最左侧
-            # 按钮也是固定大小的圆框或者方框（宽高约40），因此中心点在图片左下边角往右往下各偏移 20-25 像素
-            start_x = img_left + 22
-            start_y = img_bottom + 22
+            # 以 Airtest 给出的滑块准心作为起点
+            start_x = int(pos_btn[0])
+            start_y = int(pos_btn[1])
             
-            self.log("开始拟人化拖动滑块...")
+            self.log(f"开始拟人化拖动滑块，起步坐标: ({start_x}, {start_y})...")
             # 移动到滑块
             pyautogui.moveTo(start_x, start_y, duration=0.5, tween=pyautogui.easeInOutQuad)
             pyautogui.mouseDown()
@@ -371,7 +463,7 @@ class PageJudger:
             self.log("拖动完成！等待判断结果...")
             time.sleep(3) # 留时间刷新等待验证码重置或成功跳转
         
-        self.log("滑动验证码连续多次均未能成功，请手动介入！")
+        self.log("滑动验证码连续多次均未能成功，可能被风控阻拦，请手动滑一下！")
         return False
 
     def read_core_data(self):
@@ -437,22 +529,52 @@ class PageJudger:
                 time.sleep(0.1)
             time.sleep(0.5)  # 缩短滚动底部的总体等待时间
             
-            # 截图找下一页的标识（裁剪屏幕：30% 到 95% 之间，防止页面太短导致分页器悬在屏幕中间以上的地方）
+            # 截图找下一页的标识（裁剪屏幕：15% 到 95% 之间，防止页面太短导致分页器悬在屏幕中间以上的地方）
             img_bottom = capture_screen()
             h, w = img_bottom.shape[:2]
-            crop_y_start = int(h * 0.30)
+            crop_y_start = int(h * 0.15)
             crop_y_end = int(h * 0.95)
             img_bottom_cropped = img_bottom[crop_y_start:crop_y_end, :]
             
             # ======================== 终极强化二值化定位方案 ========================
             # 使用二值化强化（能过滤掉周围淡蓝色/浅灰色的背景干扰，让细小的图标现形）
-            next_btn_center, _, _ = find_text_on_screen(img_bottom_cropped, ">", lang='eng+chi_sim', binarize=True)
+            bottom_ocr_data = extract_ocr_data(img_bottom_cropped, lang='eng+chi_sim', binarize=True)
+            
+            # 辅助函数：在数据中寻找所有匹配，并返回最下方（y最大）的那一个
+            def get_bottom_most_center(ocr_data, target):
+                target_stripped = target.replace(' ', '')
+                full_str = ocr_data['full_ocr_str']
+                boxes = ocr_data['valid_boxes']
+                
+                best_center = None
+                max_y = -1
+                
+                # 寻找所有出现的子串
+                idx = full_str.find(target_stripped)
+                while idx != -1:
+                    match_boxes = boxes[idx:idx+len(target_stripped)]
+                    min_x = min(b['x'] for b in match_boxes)
+                    min_y = min(b['y'] for b in match_boxes)
+                    max_x = max(b['x'] + b['w'] for b in match_boxes)
+                    max_y_box = max(b['y'] + b['h'] for b in match_boxes)
+                    
+                    if min_y > max_y:
+                        max_y = min_y
+                        cx = min_x + (max_x - min_x) // 2
+                        cy = min_y + (max_y_box - min_y) // 2
+                        best_center = (cx, cy)
+                        
+                    idx = full_str.find(target_stripped, idx + 1)
+                    
+                return best_center
+            
+            next_btn_center = get_bottom_most_center(bottom_ocr_data, ">")
             
             if next_btn_center:
                 self.log("精准锁定 '>' 下一页图标锚定翻页区域...")
             else:
                 # 降级：如果识别不出箭头，直接找数字页码（如 '2'）
-                next_btn_center, _, _ = find_text_on_screen(img_bottom_cropped, next_page_num, lang='eng+chi_sim', binarize=True)
+                next_btn_center = get_bottom_most_center(bottom_ocr_data, next_page_num)
                 if next_btn_center:
                     self.log(f"精准锁定页码 '{next_page_num}' 锚定翻页区域...")
             
@@ -530,9 +652,9 @@ class PageJudger:
         """使用 Ctrl+A + Ctrl+C 复制页面所有文字，再从剪贴板解析记录行"""
         import pyperclip
         
-        # 先清空剪贴板
+        # 先清空剪贴板，填入防并发哨兵标志
         try:
-            pyperclip.copy("")
+            pyperclip.copy("[COPY_IN_PROGRESS]")
         except Exception:
             pass
         
@@ -550,13 +672,19 @@ class PageJudger:
         pyautogui.hotkey('ctrl', 'a')   # 在浏览器中全选
         time.sleep(0.5)
         pyautogui.hotkey('ctrl', 'c')   # 复制
-        time.sleep(0.7)  # 等待剪贴板写入（页面内容较多时需要更多时间）
         
+        # 【强健性架构优化】：取代死等 0.7 秒，使用剪贴板轮询锁保障庞大表格数据的完整提取
         raw_text = ""
+        wait_loops = 20 # 最长等待两秒
         try:
-            raw_text = pyperclip.paste()
+            while wait_loops > 0:
+                raw_text = pyperclip.paste()
+                if raw_text != "[COPY_IN_PROGRESS]":
+                    break
+                time.sleep(0.1)
+                wait_loops -= 1
         except Exception as e:
-            self.log(f"  剪贴板读取失败: {e}")
+            self.log(f"  剪贴板读取异常: {e}")
             
         # 取消选中，恢复正常
         pyautogui.press('escape')

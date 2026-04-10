@@ -18,6 +18,7 @@ else:
 
 # 配置文件路径
 CONFIG_FILE = os.path.join(_BASE_DIR, "config.json")
+ENV_FILE = os.path.join(_BASE_DIR, ".env")
 
 # 默认配置（与原始硬编码值保持一致）
 DEFAULT_CONFIG = {
@@ -32,17 +33,31 @@ def load_config() -> dict:
     加载 config.json 中的配置项。
     若文件不存在，自动创建并返回默认配置。
     """
-    if not os.path.exists(CONFIG_FILE):
-        save_config(DEFAULT_CONFIG)
-        return dict(DEFAULT_CONFIG)
-
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = {}
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                
         # 补充可能缺失的键（兼容旧版本配置文件）
         for key, value in DEFAULT_CONFIG.items():
             if key not in data:
                 data[key] = value
+                
+        # 尝试从 .env 加载高优先级的账号密码配置
+        if os.path.exists(ENV_FILE):
+            with open(ENV_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'): continue
+                    if '=' in line:
+                        k, v = line.split('=', 1)
+                        k, v = k.strip(), v.strip().strip("'").strip('"')
+                        if k.upper() == "ACCOUNT":
+                            data["account"] = v
+                        elif k.upper() == "PASSWORD":
+                            data["password"] = v
+                            
         return data
     except Exception:
         return dict(DEFAULT_CONFIG)

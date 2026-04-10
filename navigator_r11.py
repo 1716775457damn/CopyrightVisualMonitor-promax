@@ -45,18 +45,17 @@ def execute_r11_registration(parsed_data: dict, code_pdf_path: str, doc_pdf_path
             target_page.wait_for_timeout(1500)
             
             # 2. 点击“计算机软件著作权相关登记”
-            # 使用用户提供的精确定位 XPath 点击大卡片图片
-            sub_xpath = "/html/body/div[2]/div[2]/div[2]/div/div/img[1]"
-            logger(f"正在执行第二步点击：根据 XPath 按下【计算机软件著作权相关登记】 => {sub_xpath}")
-            card = target_page.locator(f"xpath={sub_xpath}")
+            logger("正在执行第二步点击：寻找【计算机软件著作权相关登记】入口...")
+            # 宽泛匹配，寻找包含文字的容器或图片
+            card = target_page.locator("xpath=//div[contains(text(), '计算机软件著作权')] | //img[contains(@src, 'soft')]").first
             card.wait_for(state="visible", timeout=10000)
             card.click(timeout=10000)
             target_page.wait_for_timeout(2000)
             
-            # 3. 点击 R11 立即登记按钮 (使用用户提供的精确定位 XPath)
-            r11_xpath = "/html/body/div[2]/div[2]/div[3]/div/table/tr[1]/td[1]/div/div[3]/button"
-            logger(f"正在根据精准 DOM 路径点击 R11 【立即登记】按钮: {r11_xpath}")
-            btn = target_page.locator(f"xpath={r11_xpath}")
+            # 3. 点击 R11 立即登记按钮 
+            logger("正在寻找 R11 【立即登记】按钮...")
+            # 寻找 R11 标题后最近的立即登记按钮，或者页面上的第一个立即登记按钮
+            btn = target_page.locator("xpath=(//div[contains(text(), 'R11') or contains(text(), 'r11')]/following::button[contains(text(), '立即')])[1] | (//button[contains(text(), '立即登记')])[1]").first
             btn.wait_for(state="visible", timeout=15000)
             # 为了防止被 header 等浮动元素遮挡，强行进行底部物理暴露后点击
             btn.scroll_into_view_if_needed()
@@ -70,92 +69,55 @@ def execute_r11_registration(parsed_data: dict, code_pdf_path: str, doc_pdf_path
             logger("====== 开始自动填写软著登记表单 (第1页) ======")
             
             # 1. 须知页/或前置页 点击下一步
-            step1_next_btn = "/html/body/div[2]/div[2]/div[2]/div/div[1]"
-            logger("点击须知协议: " + step1_next_btn)
-            target_page.locator(f"xpath={step1_next_btn}").click(timeout=5000)
+            logger("点击须知协议: 寻找【下一步】或同意声明...")
+            target_page.locator("xpath=//div[contains(@class,'checkbox')] | //span[contains(text(), '我已阅读')] | //input[@type='checkbox']").first.click(timeout=5000)
             target_page.wait_for_timeout(1000)
 
             # 2. 软件全称
-            soft_name_path = "/html/body/div[2]/div[2]/div[2]/div[2]/div[1]/div/div[1]/div/input"
             logger("填写软件全称...")
-            target_page.locator(f"xpath={soft_name_path}").fill(parsed_data.get('software_name', ''))
+            target_page.locator("xpath=(//div[contains(text(), '软件全称')]/following::input)[1] | //input[@placeholder='请输入软件全称']").first.fill(parsed_data.get('software_name', ''))
 
             # 3. 软件版本号
-            soft_version_path = "/html/body/div[2]/div[2]/div[2]/div[2]/div[3]/div/div[1]/div/input"
             logger("填写软件版本号...")
-            target_page.locator(f"xpath={soft_version_path}").fill(parsed_data.get('version', ''))
+            target_page.locator("xpath=(//div[contains(text(), '版本号')]/following::input)[1] | //input[@placeholder='例如：V1.0']").first.fill(parsed_data.get('version', ''))
             
             # 点击下一步
-            step2_next_btn = "/html/body/div[2]/div[2]/div[2]/div[4]/button[2]"
             logger("点击下一步进入第2页...")
-            target_page.locator(f"xpath={step2_next_btn}").click(timeout=5000)
+            # 寻找页面底部的最后一个 button 或文字包含下一步的 button
+            target_page.locator("xpath=(//button[contains(text(), '下一步')])[1] | //div[contains(@class, 'footer')]//button[not(contains(text(), '返回'))]").first.click(timeout=5000)
             target_page.wait_for_timeout(2000)
 
             logger("====== 开始自动填写软著登记表单 (第2页) ======")
             
             # 软件分类 -> 应用软件
             logger("选择软件分类: 应用软件")
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[1]/div/div/div[1]").click()
+            target_page.locator("xpath=(//div[contains(text(), '软件分类')]/following::input)[1] | //input[@placeholder='请选择软件分类']").first.click(timeout=5000)
             target_page.wait_for_timeout(500)
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[1]/div/div/div[2]/div/div[2]/div[1]").click()
+            target_page.get_by_text("应用软件", exact=True).first.click(timeout=5000)
             
-            # 开发完成日期
-            logger("填写开发完成日期...")
-            date_path = "/html/body/div[2]/div[2]/div[2]/div[4]/div/div/div/div[1]"
+            # 开发完成日期 (使用底层 JS 强制注入，绕过极度脆弱的日历面板组件操作)
+            logger("填写开发完成日期 (使用底层 JS 注入方式)...")
             finish_date = parsed_data.get('dev_finish_date', '')
-            
-            if finish_date and '-' in finish_date:
-                parts = finish_date.split('-')
-                if len(parts) == 3:
-                    year_val = parts[0]
-                    month_val = parts[1].lstrip('0')
-                    day_val = parts[2].lstrip('0')
-                    
+            if finish_date:
+                try:
+                    date_input = target_page.locator("xpath=(//div[contains(text(), '开发完成日期')]/following::input)[1] | //input[contains(@placeholder, '日期')]").first
+                    # 使用 Playwright 的 evaluate 在浏览器内部执行 JS，强行给表单赋值并派发事件触发前端框架(如Vue/React)的双向绑定更新
+                    js_code = f"""(el) => {{
+                        el.value = '{finish_date}';
+                        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        // 若挂载了特殊的 DatePicker 对象，尝试触发 blur
+                        el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                    }}"""
+                    date_input.evaluate(js_code)
+                    logger(f"✅ 开发完成日期 {finish_date} 底层强注成功，彻底避免了由于月份变化造成的日历死锁。")
+                    target_page.wait_for_timeout(500)
+                except Exception as e:
+                    logger(f"⚠️ 日期注入遭遇异常，回退尝试暴力覆盖: {e}")
                     try:
-                        # 1. 点击输入框打开日期面板
-                        target_page.locator(f"xpath={date_path}").click()
-                        target_page.wait_for_timeout(1000)
-                        
-                        popup_base = "/html/body/div[2]/div[2]/div[2]/div[4]/div/div/div/div[3]"
-                        
-                        # 2. 选择年份
-                        year_header_xpath = f"{popup_base}/div/div[1]/div/div[1]/div[1]"
-                        logger(f"点击年份选择: {year_header_xpath}")
-                        target_page.locator(f"xpath={year_header_xpath}").click(timeout=3000)
-                        target_page.wait_for_timeout(1000)
-                        # 点击具体的年份数字 (需模糊匹配，因为可能带‘年’字)
-                        try:
-                            target_page.locator(f"xpath={popup_base}").locator("div, span, td").filter(has_text=re.compile(f"^{year_val}年?$")).first.click(timeout=3000)
-                        except:
-                            target_page.locator(f"xpath={popup_base}").locator(f"text={year_val}").first.click(timeout=3000)
-                        target_page.wait_for_timeout(800)
-                        
-                        # 3. 选择月份
-                        month_header_xpath = f"{popup_base}/div/div[1]/div/div[2]/div[1]"
-                        logger(f"点击月份选择: {month_header_xpath}")
-                        target_page.locator(f"xpath={month_header_xpath}").click(timeout=3000)
-                        target_page.wait_for_timeout(800)
-                        # 点击具体的月份数字 (可能是 "10" 或是 "10月")
-                        try:
-                            target_page.locator(f"xpath={popup_base}").locator("div, span, td").filter(has_text=re.compile(f"^{month_val}月?$")).first.click(timeout=3000)
-                        except:
-                            target_page.locator(f"xpath={popup_base}").locator(f"text={month_val}").first.click(timeout=3000)
-                        target_page.wait_for_timeout(800)
-                        
-                        # 4. 选择日期
-                        logger(f"点击日期: {day_val}")
-                        day_table_xpath = f"{popup_base}/div/div[2]/div/table"
-                        # 避免点到上个月或下个月的同名日期，通常会有 class 区分（如 .available, .current 等），如果用精确文本匹配一般是安全的选择，或者简单地利用 playwright 内置的寻找可见的精确元素
-                        day_cell = target_page.locator(f"xpath={day_table_xpath}").locator("td").filter(has_text=re.compile(f"^{day_val}$")).first
-                        day_cell.click(timeout=3000)
-                        target_page.wait_for_timeout(500)
-                        
-                        logger(f"✅ 开发完成日期 {finish_date} 自动化选择成功。")
-                    except Exception as e:
-                        logger(f"⚠️ 自动化选择日期面板失败: {e}，尝试回退到手动输入点击...")
-                        target_page.locator(f"xpath={date_path}").click()
-            else:
-                target_page.locator(f"xpath={date_path}").click()
+                        date_input.fill(finish_date, force=True)
+                    except:
+                        pass
             
             # 点击下一步
             step3_next_btn = "/html/body/div[2]/div[2]/div[2]/div[7]/button[2]"
@@ -164,25 +126,34 @@ def execute_r11_registration(parsed_data: dict, code_pdf_path: str, doc_pdf_path
             target_page.wait_for_timeout(2000)
             
             logger("====== 开始自动填写软著登记表单 (运行环境、功能描述等) ======")
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[1]/div/div/textarea").fill(parsed_data.get('dev_hardware', '')) # 开发硬件环境
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[2]/div/div/textarea").fill(parsed_data.get('run_hardware', '')) # 运行硬件环境
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[3]/div/div/textarea").fill(parsed_data.get('dev_os', '')) # 开发操作系统
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[4]/div/div/textarea").fill(parsed_data.get('dev_tools', '')) # 开发软件环境
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[5]/div/div/textarea").fill(parsed_data.get('run_platform', '')) # 运行平台
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[6]/div/div/textarea").fill(parsed_data.get('support_software', '')) # 支撑软件
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[7]/div/div[2]/textarea").fill(parsed_data.get('language', '')) # 编程语言
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[8]/div/div/div[1]/div/input").fill(parsed_data.get('source_lines', '')) # 源程序量
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[9]/div/div/textarea").fill(parsed_data.get('dev_purpose', '')) # 开发目的
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[10]/div/div/textarea").fill(parsed_data.get('target_domain', '')) # 面向领域
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[11]/div/div/textarea").fill(parsed_data.get('main_functions', '')) # 主要功能
-            target_page.locator(f"xpath=/html/body/div[2]/div[2]/div[2]/div[12]/div/div[2]/textarea").fill(parsed_data.get('tech_features', '')) # 技术特点
+            
+            def fill_textarea(label_text, value):
+                if value:
+                    target_page.locator(f"xpath=(//div[contains(text(), '{label_text}')]/following::textarea)[1] | //textarea[contains(@placeholder, '{label_text}')]").first.fill(value)
+                    
+            def fill_input(label_text, value):
+                if value:
+                    target_page.locator(f"xpath=(//div[contains(text(), '{label_text}')]/following::input)[1] | //input[contains(@placeholder, '{label_text}')]").first.fill(value)
+
+            fill_textarea('开发硬件环境', parsed_data.get('dev_hardware', ''))
+            fill_textarea('运行硬件环境', parsed_data.get('run_hardware', ''))
+            fill_textarea('开发该软件的操作系统', parsed_data.get('dev_os', ''))
+            fill_textarea('软件开发环境', parsed_data.get('dev_tools', ''))
+            fill_textarea('运行平台', parsed_data.get('run_platform', ''))
+            fill_textarea('软件运行支撑环境', parsed_data.get('support_software', ''))
+            fill_textarea('编程语言', parsed_data.get('language', ''))
+            fill_input('源程序量', parsed_data.get('source_lines', ''))
+            fill_textarea('开发目的', parsed_data.get('dev_purpose', ''))
+            fill_textarea('面向领域', parsed_data.get('target_domain', ''))
+            fill_textarea('软件的主要功能', parsed_data.get('main_functions', ''))
+            fill_textarea('软件的技术特点', parsed_data.get('tech_features', ''))
             
             # 下一步
-            step4_next_btn = "/html/body/div[2]/div[2]/div[2]/div[16]/button[2]"
-            target_page.locator(f"xpath={step4_next_btn}").scroll_into_view_if_needed()
-            target_page.wait_for_timeout(500)
             logger("点击下一步进入最后阶段...")
-            target_page.locator(f"xpath={step4_next_btn}").click(timeout=5000)
+            step4_next_btn = target_page.locator("xpath=(//button[contains(text(), '下一步')])[1] | //div[contains(@class, 'footer')]//button[not(contains(text(), '返回'))]").last
+            step4_next_btn.scroll_into_view_if_needed()
+            target_page.wait_for_timeout(500)
+            step4_next_btn.click(timeout=5000)
             
             logger("✅ 自动化输入流程脚本注射完毕。")
 

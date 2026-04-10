@@ -325,11 +325,21 @@ class MainGUI:
             
         self.root.after(0, show)
         
-        # Block the calling thread (the playwright automation thread)
-        self.continue_event.wait()
+        # Block the calling thread (the playwright automation thread) safely
+        import sys
+        while not self.continue_event.wait(timeout=0.5):
+            try:
+                # If the main window is destroyed, gracefully exit the background thread
+                if not self.root.winfo_exists():
+                    sys.exit(0)
+            except Exception:
+                sys.exit(0)
         
         # Once continue is clicked, hide the button
-        self.root.after(0, self.btn_continue.pack_forget)
+        try:
+            self.root.after(0, self.btn_continue.pack_forget)
+        except Exception:
+            pass
 
     def wait_for_captcha(self):
         msg = "💡 检测到短信验证需求。请直接在网页上输入验证码，程序将【自动感应】您的输入并代劳最终提交。"

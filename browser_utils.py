@@ -59,6 +59,8 @@ def start_edge(url):
         f"--user-data-dir={profile_dir}",
         "--remote-debugging-port=9222",
         "--start-maximized",
+        "--inprivate",
+        "--force-device-scale-factor=1",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-restore-session-state",
